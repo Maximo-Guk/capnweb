@@ -1,0 +1,31 @@
+package-lock.json
+  s_fa07440e282490::t_b78779ef832fe7 21,29,3417-3756,6253-6288
+package.json
+  s_fa07440e282490::t_7a8940320b34d1 44-46,55,63
+scripts/tsgo-expected-failures.json
+  s_fa07440e282490::t_a41edd15d84483 1-11
+.github/workflows/test.yml
+  s_fa07440e282490::t_091d340c9a0429 41-46
+.github/workflows/tsgo-preview.yml
+  s_fa07440e282490::t_1f0c2f130e9f8a 1-38
+__type-tests__/tsconfig.json
+  s_fa07440e282490::t_39446c2cc1c68b 4-9
+scripts/type-instantiation-budget.mjs
+  s_fa07440e282490::t_aa60af86c6beeb 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "62df21ac328e1435941a268058ab0bc312a5486a",
+  "prompts": {},
+  "sessions": {
+    "s_fa07440e282490": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817187a-8d20-4ca6-92ef-7458e947c46b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
