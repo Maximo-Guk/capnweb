@@ -1,0 +1,21 @@
+src/index.ts
+  s_fa07440e282490::t_005f7c3caed03b 9-10,62
+src/types.d.ts
+  s_fa07440e282490::t_5ce6ab6e77182d 163-171,183-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c4e54a9f09fa702b8034cbdf3fdfabe939318d5e",
+  "prompts": {},
+  "sessions": {
+    "s_fa07440e282490": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817187a-8d20-4ca6-92ef-7458e947c46b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
