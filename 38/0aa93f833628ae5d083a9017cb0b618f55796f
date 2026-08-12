@@ -1,0 +1,23 @@
+package-lock.json
+  s_fa07440e282490::t_34b3c2156d6244 7006,7015,7018
+packages/capnweb-validate/package.json
+  s_fa07440e282490::t_a2a9ea2fe68a74 78,83,93
+.changeset/validate-own-compiler.md
+  s_fa07440e282490::t_043c8df318fd4e 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "380aa93f833628ae5d083a9017cb0b618f55796f",
+  "prompts": {},
+  "sessions": {
+    "s_fa07440e282490": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817187a-8d20-4ca6-92ef-7458e947c46b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
