@@ -1,0 +1,19 @@
+src/index.ts
+  s_da2e4f7c22bf48::t_08ccde8dc0365c 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cce0eb963988e79aed280dfa00b3cd569e734992",
+  "prompts": {},
+  "sessions": {
+    "s_da2e4f7c22bf48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_da2e4f7c22bf48",
+        "model": "unknown"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
