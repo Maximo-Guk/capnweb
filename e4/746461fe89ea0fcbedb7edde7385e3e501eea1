@@ -1,0 +1,19 @@
+.changeset/shared-rpc-promise-alias.md
+  s_25d46e51fbdcc6::t_02067997eb65fc 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e4746461fe89ea0fcbedb7edde7385e3e501eea1",
+  "prompts": {},
+  "sessions": {
+    "s_25d46e51fbdcc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_25d46e51fbdcc6",
+        "model": "unknown"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
