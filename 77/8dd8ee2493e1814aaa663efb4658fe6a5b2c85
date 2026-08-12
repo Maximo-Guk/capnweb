@@ -1,0 +1,19 @@
+src/index.ts
+  s_171918035880fa::t_70ea5c27a2205d 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "778dd8ee2493e1814aaa663efb4658fe6a5b2c85",
+  "prompts": {},
+  "sessions": {
+    "s_171918035880fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_171918035880fa",
+        "model": "unknown"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
