@@ -1,0 +1,25 @@
+packages/capnweb-validate/package.json
+  s_fa07440e282490::t_9eb927006cc6fa 79
+.changeset/validate-ts-peer-cap.md
+  s_fa07440e282490::t_6fad2e0b3c8fd1 1-5
+packages/capnweb-validate/README.md
+  s_fa07440e282490::t_01c7faf8ec1103 23-28
+packages/capnweb-validate/src/transform/context.ts
+  s_fa07440e282490::t_ba676f03cca5fb 123-139,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "00fc7be12a3a821f4ceeb4f742f847635315640f",
+  "prompts": {},
+  "sessions": {
+    "s_fa07440e282490": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817187a-8d20-4ca6-92ef-7458e947c46b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
