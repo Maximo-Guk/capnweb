@@ -1,0 +1,19 @@
+__tests__/index.test.ts
+  s_ccc542f840d77b::t_0e2ff12872e3d5 680
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "264b210c981ad1a5181ad3d535ac4954be1a512a",
+  "prompts": {},
+  "sessions": {
+    "s_ccc542f840d77b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ccc542f840d77b",
+        "model": "unknown"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
