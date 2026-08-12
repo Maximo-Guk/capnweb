@@ -1,0 +1,25 @@
+scripts/check-dist-ascii.mjs
+  s_fa07440e282490::t_1bda6b66aaff56 1-42
+package.json
+  s_fa07440e282490::t_afd4eae4cd69cf 38
+src/websocket.ts
+  s_fa07440e282490::t_48253177e6982b 10
+.changeset/ascii-only-dist.md
+  s_fa07440e282490::t_8990a41e6c5a04 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9a92ac7ec12b5e29b7b8c9a23e65ef6d9fb4ec39",
+  "prompts": {},
+  "sessions": {
+    "s_fa07440e282490": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817187a-8d20-4ca6-92ef-7458e947c46b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
