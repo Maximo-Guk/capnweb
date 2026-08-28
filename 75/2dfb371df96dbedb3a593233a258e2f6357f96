@@ -1,0 +1,19 @@
+designs/revocation-and-membranes.md
+  s_f02e1f7663c390::t_b32795dc932c33 1-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "752dfb371df96dbedb3a593233a258e2f6357f96",
+  "prompts": {},
+  "sessions": {
+    "s_f02e1f7663c390": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "45c32314-c2d8-4c37-8707-d74ae1b6079d",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maximo Guk <62088388+Maximo-Guk@users.noreply.github.com>"
+    }
+  }
+}
