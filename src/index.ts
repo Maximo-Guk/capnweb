@@ -39,7 +39,44 @@ export type { RpcTransport, RpcTransportWithCustomEncoding, AnyRpcTransport,
 export type RpcStub<T extends RpcCompatible<T>> = Stub<T>;
 export const RpcStub: {
   new <T extends RpcCompatible<T>>(value: T): RpcStub<T>;
+
+  /**
+   * Like `new RpcStub(value)`, but the returned stub is revocable: calling `revoker.revoke()`
+   * breaks the stub and, transitively, every capability derived from it -- `dup()`s of the stub,
+   * stubs obtained from its call results (whether awaited or pipelined), and copies of any of
+   * those that were passed on to RPC peers. Remote holders of a revoked capability see the
+   * revocation `reason` as the error whenever they next use it.
+   *
+   * If `value` is an existing stub, the revocable stub is a new stub sharing the same target --
+   * like `dup()`, except revocable -- and the original stub is unaffected by revocation.
+   *
+   * Caveats:
+   * - Revocation cannot un-run application code: a call that was already delivered before
+   *   `revoke()` may still execute, even though its caller may see a rejection.
+   * - Streams (ReadableStream/WritableStream) passing through a revocable stub are not severed
+   *   by revocation once open.
+   * - Revocation transitivity ends at the boundary with workerd's native RPC system: a native
+   *   stub passing through a revocable Cap'n Web stub is treated as an opaque target.
+   */
+  revocable<T extends RpcCompatible<T>>(value: T): { stub: RpcStub<T>; revoker: RpcRevoker };
 } = <any>RpcStubImpl;
+
+/**
+ * The revoke authority for a stub created by `RpcStub.revocable()`. Kept separate from the stub
+ * itself so that revoke authority can be retained while the stub is handed out (including to
+ * remote peers). The revoker itself cannot be sent over RPC.
+ */
+export interface RpcRevoker extends Disposable {
+  /**
+   * Revoke the associated stub. `reason`, if given, becomes the error that the stub (and all
+   * capabilities derived from it) rejects with from this point on; defaults to a generic Error.
+   * Idempotent.
+   */
+  revoke(reason?: unknown): void;
+
+  /** True once revoke() has been called (disposing the revoker also revokes). */
+  readonly revoked: boolean;
+}
 
 /**
  * Represents the result of an RPC call.

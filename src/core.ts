@@ -555,6 +555,32 @@ export class RpcStub extends RpcTarget {
     return mapImpl.sendMap(hook, pathIfPromise || [], func);
   }
 
+  // Like `new RpcStub(value)`, but the returned stub is revocable: calling `revoker.revoke()`
+  // breaks the stub and, transitively, every capability derived from it (see RpcRevoker).
+  //
+  // If `value` is an existing stub (or promise), the revocable stub is a new stub sharing the
+  // same target -- like `dup()`, except revocable -- and the original is unaffected by
+  // revocation.
+  static revocable(value: unknown): { stub: RpcStub, revoker: RpcRevoker } {
+    let hook: StubHook;
+    let kind = typeForRpc(value);
+    if (kind === "stub" || kind === "rpc-promise") {
+      hook = unwrapStubAndDup(<RpcStub>value);
+    } else if (value instanceof RpcTarget || value instanceof Function) {
+      hook = TargetStubHook.create(<RpcTarget | Function>value, undefined);
+    } else {
+      // As in the constructor, adopt the value with "return" semantics, taking ownership of any
+      // stubs within.
+      hook = new PayloadStubHook(RpcPayload.fromAppReturn(value));
+    }
+
+    let state: RevokerState = { revoked: false, wrappers: new Set() };
+    return {
+      stub: new RpcStub(new RevokerStubHook(hook, state)),
+      revoker: new RpcRevoker(state),
+    };
+  }
+
   toString() {
     return "[object RpcStub]";
   }
@@ -1612,6 +1638,74 @@ export class RpcPayload {
         return;
     }
   }
+
+  // Replace the hook backing every stub and promise embedded in this payload, using the given
+  // function. This is used by revocable stubs (see RevokerStubHook) to extend revocation to
+  // capabilities embedded in a pulled resolution.
+  //
+  // Forces a deep copy if the payload still points at an app-provided value, so that the `hooks`
+  // and `promises` lists exist; the lists are updated along with the stubs themselves, preserving
+  // disposal accounting (disposing the payload disposes the replacement hooks).
+  public rewriteStubs(f: (hook: StubHook) => StubHook): void {
+    this.ensureDeepCopied();
+
+    let replaced = new Map<StubHook, StubHook>();
+    this.rewriteStubsImpl(this.value, f, replaced);
+
+    // Fix up the disposal list to point at the replacements. (Entries not in `replaced` are
+    // hooks with no corresponding stub in the value tree, e.g. stream hooks -- leave them.)
+    this.hooks = this.hooks!.map(hook => replaced.get(hook) ?? hook);
+
+    // The `promises` list covers every embedded promise (including one at the root), so promises
+    // are rewritten here rather than in the tree walk.
+    for (let record of this.promises!) {
+      let raw = unwrapStubAndPath(record.promise);
+      raw.hook = f(raw.hook);
+    }
+  }
+
+  private rewriteStubsImpl(value: unknown, f: (hook: StubHook) => StubHook,
+                           replaced: Map<StubHook, StubHook>): void {
+    let kind = typeForRpc(value);
+    switch (kind) {
+      case "array": {
+        let array = <Array<unknown>>value;
+        let len = array.length;
+        for (let i = 0; i < len; i++) {
+          this.rewriteStubsImpl(array[i], f, replaced);
+        }
+        return;
+      }
+
+      case "object": {
+        let object = <Record<string, unknown>>value;
+        for (let i in object) {
+          this.rewriteStubsImpl(object[i], f, replaced);
+        }
+        return;
+      }
+
+      case "stub": {
+        let raw = unwrapStubAndPath(<RpcStub>value);
+        let replacement = replaced.get(raw.hook);
+        if (!replacement) {
+          replacement = f(raw.hook);
+          replaced.set(raw.hook, replacement);
+        }
+        raw.hook = replacement;
+        return;
+      }
+
+      case "rpc-promise":
+        // Handled via the `promises` list in rewriteStubs().
+        return;
+
+      default:
+        // Other types either cannot contain stubs, or (streams, request/response bodies) are
+        // intentionally not rewritten -- see the documented limitations of revocable stubs.
+        return;
+    }
+  }
 };
 
 // =======================================================================================
@@ -2069,6 +2163,228 @@ class TargetStubHook extends ValueStubHook {
       Promise.resolve(target).then(() => {}, callback);
     }
     // TODO: Should non-thenable RpcTargets be able to implement onRpcBroken?
+  }
+}
+
+// =======================================================================================
+// Revocable stubs
+
+// State shared by every RevokerStubHook derived from one RpcStub.revocable() call: dup()s of the
+// revocable stub, hooks for call results derived from it (awaited or pipelined), and stubs
+// embedded in pulled resolutions all share this one state object, which is what makes revoke()
+// transitive.
+type RevokerState = {
+  revoked: boolean;
+
+  // Set when revoke() is called; the error that all wrapped hooks break with.
+  error?: any;
+
+  // All live (not yet disposed, not yet revoked) wrappers sharing this state.
+  wrappers: Set<RevokerStubHook>;
+};
+
+function revokeState(state: RevokerState, error: any): void {
+  if (state.revoked) {
+    // revoke() is idempotent.
+    return;
+  }
+  state.revoked = true;
+  state.error = error;
+
+  // Break every wrapper. Note that the wrappers survive as tombstones wrapping an ErrorStubHook:
+  // an RPC session's export table may hold direct references to them, and their identity must
+  // remain stable so that the peer's later "release" messages still balance.
+  let wrappers = [...state.wrappers];
+  state.wrappers.clear();
+  for (let wrapper of wrappers) {
+    wrapper.revokeNow(error);
+  }
+}
+
+// Decorator around another StubHook which breaks -- along with every hook derived from it --
+// when the shared RevokerState is revoked. Created by RpcStub.revocable().
+//
+// Note that this only wraps the *outbound* direction: results flowing out of the revocable stub
+// are wrapped, but arguments passed into it are not, so a capability the caller sends through a
+// revocable stub is not itself revoked. (This is narrower than a full Cap'n Proto membrane, but
+// it is the direction that matters for revocation.)
+class RevokerStubHook extends StubHook {
+  private inner: StubHook;  // replaced with an ErrorStubHook when revoked
+  private state: RevokerState;
+
+  // Callbacks registered via onBroken() which must fire on revocation. Initialized on first use.
+  private brokenCallbacks?: Array<(error: any) => void>;
+
+  private disposed = false;
+
+  // Payloads that pull() has already rewritten, so that a second pull() (which returns the same
+  // payload) doesn't wrap the embedded hooks twice.
+  private pulled?: WeakSet<RpcPayload>;
+
+  constructor(inner: StubHook, state: RevokerState) {
+    super();
+    this.state = state;
+    if (state.revoked) {
+      // Already revoked -- don't hold the real hook at all.
+      inner.dispose();
+      this.inner = new ErrorStubHook(state.error);
+    } else {
+      this.inner = inner;
+      state.wrappers.add(this);
+    }
+  }
+
+  // Called by revokeState() only.
+  revokeNow(error: any): void {
+    let inner = this.inner;
+    this.inner = new ErrorStubHook(error);
+
+    // Dispose the real hook. This cancels outstanding pulls and disposes the payload backing it
+    // (severing capabilities embedded in a not-yet-delivered resolution). Note this also means
+    // revoking implies disposing the underlying target: like dispose(), revocation releases this
+    // stub's reference to it.
+    inner.dispose();
+
+    if (this.brokenCallbacks) {
+      let callbacks = this.brokenCallbacks;
+      this.brokenCallbacks = undefined;
+      for (let callback of callbacks) {
+        try {
+          callback(error);
+        } catch (err) {
+          // Don't throw back into the RPC system. Treat this as an unhandled rejection.
+          Promise.reject(err);
+        }
+      }
+    }
+  }
+
+  // Wrapping the hooks returned by call()/map()/get()/dup() is what makes revocation transitive.
+  private wrap(hook: StubHook): StubHook {
+    return new RevokerStubHook(hook, this.state);
+  }
+
+  call(path: PropertyPath, args: RpcPayload): StubHook {
+    return this.wrap(this.inner.call(path, args));
+  }
+
+  stream(path: PropertyPath, args: RpcPayload): {promise: Promise<void>, size?: number} {
+    // Stream call results carry no capabilities, so there is nothing to wrap. (After revocation,
+    // `inner` is an ErrorStubHook, so writes reject.)
+    return this.inner.stream(path, args);
+  }
+
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
+    return this.wrap(this.inner.map(path, captures, instructions));
+  }
+
+  get(path: PropertyPath): StubHook {
+    return this.wrap(this.inner.get(path));
+  }
+
+  dup(): StubHook {
+    return this.wrap(this.inner.dup());
+  }
+
+  pull(): RpcPayload | Promise<RpcPayload> {
+    let result = this.inner.pull();
+    if (result instanceof RpcPayload) {
+      return this.rewritePulled(result);
+    } else {
+      return result.then(payload => this.rewritePulled(payload));
+    }
+  }
+
+  // Wrap the hooks backing any stubs embedded in a pulled resolution, so that they too are
+  // severed by revoke(). Also re-checks revocation, since a pull may settle after revoke().
+  private rewritePulled(payload: RpcPayload): RpcPayload {
+    if (this.state.revoked) {
+      // The inner hook's dispose() typically already disposed this payload; dispose() is
+      // idempotent, so this is just for the paths where it didn't.
+      payload.dispose();
+      throw this.state.error;
+    }
+    if (!this.pulled) {
+      this.pulled = new WeakSet();
+    }
+    if (!this.pulled.has(payload)) {
+      this.pulled.add(payload);
+      payload.rewriteStubs(hook => new RevokerStubHook(hook, this.state));
+    }
+    return payload;
+  }
+
+  ignoreUnhandledRejections(): void {
+    this.inner.ignoreUnhandledRejections();
+  }
+
+  dispose(): void {
+    if (!this.disposed) {
+      this.disposed = true;
+      this.state.wrappers.delete(this);
+      this.inner.dispose();
+    }
+  }
+
+  onBroken(callback: (error: any) => void): void {
+    if (this.state.revoked) {
+      // Match ErrorStubHook: deliver immediately.
+      try {
+        callback(this.state.error);
+      } catch (err) {
+        Promise.reject(err);
+      }
+      return;
+    }
+
+    // The underlying hook may break for its own reasons, and we must also fire on revocation.
+    // Guard so that the callback only ever fires once.
+    let fired = false;
+    let once = (error: any) => {
+      if (!fired) {
+        fired = true;
+        callback(error);
+      }
+    };
+    (this.brokenCallbacks ??= []).push(once);
+    this.inner.onBroken(once);
+  }
+}
+
+// The revoke authority for a stub created by `RpcStub.revocable()`. Calling `revoke()` breaks the
+// associated stub -- along with every capability derived from it, including dup()s of the stub,
+// stubs obtained from its call results (whether awaited or pipelined), and copies of any of those
+// that were passed on to RPC peers -- from this point on. The revoker is intentionally a separate
+// object from the stub itself, so that revoke authority can be retained while the stub is handed
+// out.
+//
+// The revoker itself is not serializable: revoke authority stays wherever it was created.
+//
+// Note that revoking is not the same as disposing: revocation breaks the capability for everyone
+// downstream (and releases the underlying target, running its disposer), while dispose() merely
+// releases one reference. Remote holders of a revoked capability find out when they next try to
+// use it (or immediately, if they registered onRpcBroken() and the brokenness has propagated).
+//
+// Also note that revocation cannot un-run application code: a call delivered to the target before
+// revoke() took effect may still run to completion, even though the caller sees a rejection.
+export class RpcRevoker {
+  // Note: Internal constructor. Applications obtain revokers from RpcStub.revocable().
+  constructor(private state: RevokerState) {}
+
+  // Revoke the associated stub. `reason`, if given, becomes the error that the stub (and all
+  // capabilities derived from it) rejects with from this point on; it defaults to a generic
+  // Error. Idempotent: calling revoke() on an already-revoked revoker does nothing.
+  revoke(reason?: unknown): void {
+    revokeState(this.state, reason === undefined ? new Error("RPC stub was revoked.") : reason);
+  }
+
+  get revoked(): boolean {
+    return this.state.revoked;
+  }
+
+  // `using` disposal revokes with the default reason.
+  [Symbol.dispose](): void {
+    this.revoke();
   }
 }
 

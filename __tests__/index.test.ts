@@ -2180,6 +2180,252 @@ describe("onRpcBroken", () => {
   });
 });
 
+describe("revocable stubs", () => {
+  it("revokes a local stub with the given reason", async () => {
+    let target = new Counter(3);
+    let { stub, revoker } = RpcStub.revocable(target);
+
+    expect(revoker.revoked).toBe(false);
+    expect(await stub.increment(2)).toBe(5);
+
+    revoker.revoke(new RangeError("gone fishing"));
+    expect(revoker.revoked).toBe(true);
+    await expect(() => stub.increment(1)).rejects.toThrow(new RangeError("gone fishing"));
+
+    // revoke() is idempotent: a second call (with a different reason) changes nothing.
+    revoker.revoke(new Error("a different reason"));
+    await expect(() => stub.increment(1)).rejects.toThrow(new RangeError("gone fishing"));
+
+    // The target itself is unaffected; only stubs are broken.
+    expect(target.increment(1)).toBe(6);
+
+    stub[Symbol.dispose]();
+  });
+
+  it("revokes with a default reason if none is given", async () => {
+    let { stub, revoker } = RpcStub.revocable(new Counter(0));
+    revoker.revoke();
+    await expect(() => stub.increment(1)).rejects.toThrow(new Error("RPC stub was revoked."));
+    stub[Symbol.dispose]();
+  });
+
+  it("revokes transitively through call results, whether awaited or pipelined", async () => {
+    let { stub, revoker } = RpcStub.revocable(new TestTarget());
+
+    // Awaited result: the returned counter stub is derived from the revocable stub.
+    let counter = await stub.makeCounter(10);
+    expect(await counter.increment(5)).toBe(15);
+
+    // Pipelined result.
+    let pipelined = stub.makeCounter(20);
+    expect(await pipelined.increment(1)).toBe(21);
+
+    revoker.revoke(new Error("factory closed"));
+
+    await expect(() => counter.increment(1)).rejects.toThrow(new Error("factory closed"));
+    await expect(() => pipelined.increment(1)).rejects.toThrow(new Error("factory closed"));
+    await expect(() => stub.makeCounter(1)).rejects.toThrow(new Error("factory closed"));
+
+    counter[Symbol.dispose]();
+    stub[Symbol.dispose]();
+  });
+
+  it("revokes stubs embedded in a pulled result payload", async () => {
+    class Maker extends RpcTarget {
+      makeCounters(i: number, j: number) {
+        return { first: new Counter(i), deeper: [{ second: new Counter(j) }] };
+      }
+    }
+
+    let { stub, revoker } = RpcStub.revocable(new Maker());
+
+    let result = await (stub as any).makeCounters(1, 10);
+    expect(await result.first.increment(1)).toBe(2);
+    expect(await result.deeper[0].second.increment(1)).toBe(11);
+
+    revoker.revoke(new Error("all embedded stubs die"));
+
+    await expect(() => result.first.increment(1)).rejects.toThrow(new Error("all embedded stubs die"));
+    await expect(() => result.deeper[0].second.increment(1))
+        .rejects.toThrow(new Error("all embedded stubs die"));
+
+    result[Symbol.dispose]();
+    stub[Symbol.dispose]();
+  });
+
+  it("shares revocation with dup()s", async () => {
+    let { stub, revoker } = RpcStub.revocable(new Counter(0));
+    let dupe = stub.dup();
+
+    // Disposing the original does not affect the dup...
+    stub[Symbol.dispose]();
+    expect(await dupe.increment(1)).toBe(1);
+
+    // ...but revoking breaks it.
+    revoker.revoke(new Error("all copies die"));
+    await expect(() => dupe.increment(1)).rejects.toThrow(new Error("all copies die"));
+    dupe[Symbol.dispose]();
+  });
+
+  it("leaves the original stub unaffected when wrapping an existing stub", async () => {
+    let original = new RpcStub(new Counter(0));
+    let { stub, revoker } = RpcStub.revocable(original);
+
+    expect(await stub.increment(1)).toBe(1);
+    revoker.revoke(new Error("wrapped copy revoked"));
+    await expect(() => stub.increment(1)).rejects.toThrow(new Error("wrapped copy revoked"));
+
+    // The original still works.
+    expect(await original.increment(1)).toBe(2);
+
+    stub[Symbol.dispose]();
+    original[Symbol.dispose]();
+  });
+
+  it("runs the target's disposer on revoke, exactly once", async () => {
+    let spy = disposalSpy();
+    let disposeCount = 0;
+    let target = spy.target as any;
+    let baseDispose = target[Symbol.dispose].bind(target);
+    target[Symbol.dispose] = () => { ++disposeCount; baseDispose(); };
+
+    let { stub, revoker } = RpcStub.revocable(spy.target);
+
+    revoker.revoke(new Error("done"));
+    expect(spy.wasDisposed()).toBe(true);
+    expect(disposeCount).toBe(1);
+
+    // Disposing the stub afterwards must not run the disposer again.
+    stub[Symbol.dispose]();
+    expect(disposeCount).toBe(1);
+  });
+
+  it("revokes when the revoker is disposed via `using`", async () => {
+    let { stub, revoker } = RpcStub.revocable(new Counter(0));
+    {
+      using r = revoker;
+      expect(await stub.increment(1)).toBe(1);
+      expect(r.revoked).toBe(false);
+    }
+    expect(revoker.revoked).toBe(true);
+    await expect(() => stub.increment(1)).rejects.toThrow(new Error("RPC stub was revoked."));
+    stub[Symbol.dispose]();
+  });
+
+  it("fires onRpcBroken with the revocation reason", async () => {
+    let { stub, revoker } = RpcStub.revocable(new TestTarget());
+    let counter = await stub.makeCounter(0);
+
+    let errors: {which: string, error: any}[] = [];
+    stub.onRpcBroken(error => { errors.push({which: "stub", error}); });
+    counter.onRpcBroken(error => { errors.push({which: "counter", error}); });
+
+    revoker.revoke(new Error("broken by revocation"));
+
+    expect(errors).toStrictEqual([
+      {which: "stub", error: new Error("broken by revocation")},
+      {which: "counter", error: new Error("broken by revocation")},
+    ]);
+
+    // Registering after revocation reports the error immediately.
+    stub.onRpcBroken(error => { errors.push({which: "late", error}); });
+    expect(errors.length).toBe(3);
+    expect(errors[2]).toStrictEqual({which: "late", error: new Error("broken by revocation")});
+
+    counter[Symbol.dispose]();
+    stub[Symbol.dispose]();
+  });
+
+  it("severs a stub held by a remote peer, without disturbing the session", async () => {
+    class Holder extends RpcTarget {
+      held?: RpcStub<Counter>;
+      hold(c: RpcStub<Counter>) { this.held = c.dup(); }
+      useHeld() { return this.held!.increment(1); }
+      dropHeld() { this.held![Symbol.dispose](); }
+    }
+
+    await using harness = new TestHarness(new Holder());
+    let holder = harness.stub;
+
+    let { stub, revoker } = RpcStub.revocable(new Counter(10));
+    await holder.hold(stub);
+
+    // The server's copy works...
+    expect(await holder.useHeld()).toBe(11);
+
+    revoker.revoke(new RangeError("access revoked"));
+
+    // ...until revoked. The revocation reason propagates to the server's use of the stub, and
+    // from there back to us.
+    await expect(() => holder.useHeld()).rejects.toThrow(new RangeError("access revoked"));
+
+    // The rest of the session is unaffected: we can still talk to the main stub, and the peer
+    // can still release its (now broken) copy cleanly. The harness's checkAllDisposed() verifies
+    // that the import/export tables balance despite the revocation.
+    await holder.dropHeld();
+
+    stub[Symbol.dispose]();
+    await pumpMicrotasks();
+  });
+
+  it("revokes a stub obtained from a remote peer", async () => {
+    class Maker extends RpcTarget {
+      makeCounter(i: number) { return new Counter(i); }
+    }
+
+    await using harness = new TestHarness(new Maker());
+
+    // Wrap a remote stub in a revocable wrapper; hand out the wrapper.
+    let remoteCounter = await (harness.stub as any).makeCounter(5);
+    let { stub, revoker } = RpcStub.revocable<Counter>(remoteCounter);
+
+    expect(await stub.increment(1)).toBe(6);
+
+    revoker.revoke(new Error("no more counting"));
+    await expect(() => stub.increment(1)).rejects.toThrow(new Error("no more counting"));
+
+    // The original remote stub is unaffected (revocable() has dup() semantics).
+    expect(await remoteCounter.increment(1)).toBe(7);
+
+    stub[Symbol.dispose]();
+    remoteCounter[Symbol.dispose]();
+    await pumpMicrotasks();
+  });
+
+  it("cannot send the revoker itself over RPC", async () => {
+    await using harness = new TestHarness(new TestTarget());
+
+    let { stub, revoker } = RpcStub.revocable(new Counter(0));
+    // Like other non-serializable arguments, this throws synchronously from the call.
+    expect(() => harness.stub.incrementCounter(revoker as any, 1))
+        .toThrow(/Cannot serialize value/);
+
+    revoker.revoke();
+    stub[Symbol.dispose]();
+    await pumpMicrotasks();
+  });
+
+  it("rejects a pull that settles after revocation", async () => {
+    let resolveCall!: (value: number) => void;
+    class Slow extends RpcTarget {
+      slowCall(): Promise<number> {
+        return new Promise(resolve => { resolveCall = resolve; });
+      }
+    }
+
+    let { stub, revoker } = RpcStub.revocable(new Slow());
+
+    let promise = (stub as any).slowCall();
+    await pumpMicrotasks();
+
+    revoker.revoke(new Error("too slow"));
+    resolveCall(123);
+
+    await expect(() => promise).rejects.toThrow(new Error("too slow"));
+    stub[Symbol.dispose]();
+  });
+});
+
 // =======================================================================================
 
 // Creates an RpcTarget that records whether its disposer has run, for verifying that a payload
